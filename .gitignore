@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .venv/
 .superpowers/
+terraform/.terraform/
+terraform/*.tfstate*
