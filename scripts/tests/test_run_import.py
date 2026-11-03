@@ -19,6 +19,7 @@ def env(tmp_path):
     home = tmp_path / "neo4j-home"
     (home / "data" / "databases").mkdir(parents=True)
     scratch = tmp_path / "scratch"
+    data_dir = scratch / "neo4j-data"
     (scratch / "source" / "nodes" / "Person").mkdir(parents=True)
     (scratch / "source" / "relationships" / "WORKS_FOR").mkdir(parents=True)
     (scratch / "source" / "nodes" / "Person" / "person.csv").write_text(
@@ -26,12 +27,14 @@ def env(tmp_path):
     (scratch / "source" / "relationships" / "WORKS_FOR" /
      "works_for.csv").write_text("start:START_ID,end:END_ID\n")
 
-    # fake neo4j-admin: record args, create a fake db dir, exit 0
+    # fake neo4j-admin: record args + HEAP_SIZE, create fake db + tx dirs, exit 0
     admin = stub_dir / "neo4j-admin"
     admin.write_text(f"""#!/bin/bash
 echo "$@" > "{tmp_path / 'admin-args.txt'}"
-mkdir -p "{home}/data/databases/testdb"
-echo blob > "{home}/data/databases/testdb/file.db"
+echo "$HEAP_SIZE" > "{tmp_path / 'admin-heap.txt'}"
+mkdir -p "$NEO4J_DATA_DIR/databases/testdb" "$NEO4J_DATA_DIR/transactions/testdb"
+echo blob > "$NEO4J_DATA_DIR/databases/testdb/file.db"
+echo tx > "$NEO4J_DATA_DIR/transactions/testdb/tx.log"
 exit 0
 """)
     # fake aws: emulate `aws s3 ls|sync|cp`; size check reads from fake_s3
@@ -74,7 +77,7 @@ case "$cmd" in
         done
         exit 0
         ;;
-      sync) exit 0 ;;
+      sync) echo "$@" > "{tmp_path / 'sync-args.txt'}"; exit 0 ;;
       cp)
         src="$1"; dest="$2"
         if [[ "$dest" == s3://* ]]; then
@@ -97,10 +100,11 @@ exit 1
     e = dict(os.environ)
     e.update(PATH=f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
              NEO4J_HOME=str(home), SCRATCH=str(scratch),
+             NEO4J_DATA_DIR=str(data_dir),
              BASH_ENV="", LC_ALL="C")
     return type("Env", (), {
         "env": e, "tmp": tmp_path, "fake_s3": fake_s3, "home": home,
-        "scratch": scratch})()
+        "scratch": scratch, "data_dir": data_dir})()
 
 
 def run_script(env, *args):
@@ -140,6 +144,29 @@ def test_local_mode_imports_and_uploads_artifact(env):
     assert len(artifacts) == 1
     # timings JSON uploaded
     assert len(list(env.fake_s3.glob("testdb-*.json"))) == 1
+
+
+def test_import_behavior_contract(env):
+    """Scratch data dir, transactions in artifact, HEAP_SIZE,
+    --overwrite-destination, sync --delete."""
+    r = run_script(env, "--bucket", "b", "--mode", "local", "--db", "testdb")
+    assert r.returncode == 0, r.stderr
+    # heap propagated via HEAP_SIZE
+    assert (env.tmp / "admin-heap.txt").read_text().strip() == "8g"
+    # idempotent re-import
+    assert "--overwrite-destination" in (env.tmp / "admin-args.txt").read_text()
+    # sync removes stale source files
+    assert "--delete" in (env.tmp / "sync-args.txt").read_text()
+    # artifact contains both databases/ and transactions/ trees
+    artifact = next(env.fake_s3.glob("testdb-*.tar.zst"))
+    listing = subprocess.run(
+        ["bash", "-c", f"zstd -dc '{artifact}' | tar -t"],
+        capture_output=True, text=True, check=True).stdout
+    names = listing.split()
+    assert "databases/testdb/file.db" in names, names
+    assert "transactions/testdb/tx.log" in names, names
+    # source scratch removed after successful local import
+    assert not (env.scratch / "source").exists()
 
 
 def test_missing_source_fails_before_admin_invocation(env):

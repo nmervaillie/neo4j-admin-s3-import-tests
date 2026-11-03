@@ -23,6 +23,33 @@ def _s3_client():
     return boto3.client("s3")
 
 
+def clear_dest(dest: str):
+    """Remove existing files under dest (local dir or s3:// prefix).
+
+    Called before publishing so regeneration never leaves stale files
+    (e.g. old chunked parts after switching rows_per_file).
+    """
+    if is_s3_dest(dest):
+        bucket, prefix = parse_s3(dest)
+        client = _s3_client()
+        paginator = client.get_paginator("list_objects_v2")
+        keys = [o["Key"] for page in paginator.paginate(
+                    Bucket=bucket, Prefix=f"{prefix}/")
+                for o in page.get("Contents", [])]
+        for i in range(0, len(keys), 1000):
+            client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]]})
+        return
+    dest_dir = Path(dest)
+    if dest_dir.exists():
+        for child in dest_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+
 def publish(paths, dest: str):
     """Move staged files into dest (local dir or s3:// prefix).
 

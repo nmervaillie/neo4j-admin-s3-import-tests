@@ -6,6 +6,7 @@ set -euo pipefail
 BUCKET="" MODE="" DB="neo4j" DRY_RUN=0 KEEP_SCRATCH=0
 JAVA_HEAP="${JAVA_HEAP:-8g}"
 NEO4J_HOME="${NEO4J_HOME:-/opt/neo4j}"
+NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-/scratch/neo4j-data}"
 SCRATCH="${SCRATCH:-/scratch}"
 ZSTD_LEVEL="${ZSTD_LEVEL:-3}"
 SOURCE_NODES="nodes" SOURCE_RELS="relationships"
@@ -16,6 +17,7 @@ Usage: $(basename "$0") --bucket BUCKET --mode s3|local [--db NAME]
                       [--dry-run] [--keep-scratch]
 
 Environment: JAVA_HEAP (default 8g), NEO4J_HOME (default /opt/neo4j),
+             NEO4J_DATA_DIR (default /scratch/neo4j-data),
              SCRATCH (default /scratch), ZSTD_LEVEL (default 3)
 EOF
   exit 2
@@ -34,7 +36,8 @@ done
 [[ -n "$BUCKET" && ( "$MODE" == "s3" || "$MODE" == "local" ) ]] || usage
 
 S3_SOURCE="s3://$BUCKET/source"
-DB_DIR="$NEO4J_HOME/data/databases/$DB"
+DB_DIR="$NEO4J_DATA_DIR/databases/$DB"
+TX_DIR="$NEO4J_DATA_DIR/transactions/$DB"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_NAME="${DB}-${TIMESTAMP}.tar.zst"
 ARTIFACT="$SCRATCH/databases/$ARTIFACT_NAME"
@@ -57,7 +60,7 @@ if [[ "$MODE" == "s3" ]]; then
 else
   mkdir -p "$SCRATCH/source"
   T_SYNC0=$(date +%s)
-  aws s3 sync "$S3_SOURCE/" "$SCRATCH/source/"
+  aws s3 sync --delete "$S3_SOURCE/" "$SCRATCH/source/"
   T_SYNC1=$(date +%s)
   SYNC_SECONDS=$((T_SYNC1 - T_SYNC0))
   NODE_LABELS=$(cd "$SCRATCH/source/$SOURCE_NODES" 2>/dev/null && ls -1 || true)
@@ -86,7 +89,7 @@ for rtype in $REL_TYPES; do
   IMPORT_ARGS+=(--relationships="$rtype=$(echo "$files" | paste -sd, -)")
 done
 
-CMD=(neo4j-admin database import full "$DB" "${IMPORT_ARGS[@]}")
+CMD=(neo4j-admin database import full "$DB" --overwrite-destination "${IMPORT_ARGS[@]}")
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "DRY RUN resolved command:"
@@ -97,14 +100,16 @@ fi
 
 # --- import -------------------------------------------------------------------
 T_IMPORT0=$(date +%s)
-JAVA_HEAP="$JAVA_HEAP" "${CMD[@]}" || fail "neo4j-admin import failed (exit $?); source kept at $SCRATCH/source for post-mortem"
+HEAP_SIZE="$JAVA_HEAP" "${CMD[@]}" || fail "neo4j-admin import failed (exit $?); source kept at $SCRATCH/source for post-mortem"
 T_IMPORT1=$(date +%s)
 [[ -d "$DB_DIR" ]] || fail "import succeeded but database dir not found: $DB_DIR"
 
 # --- artifact upload (mandatory) ----------------------------------------------
 mkdir -p "$SCRATCH/databases"
 T_PACK0=$(date +%s)
-tar -C "$DB_DIR" -cf - . | zstd -"$ZSTD_LEVEL" -o "$ARTIFACT" \
+TAR_PATHS=("databases/$DB")
+[[ -d "$TX_DIR" ]] && TAR_PATHS+=("transactions/$DB")
+tar -C "$NEO4J_DATA_DIR" -cf - "${TAR_PATHS[@]}" | zstd -"$ZSTD_LEVEL" -o "$ARTIFACT" \
   || fail "artifact packing failed"
 T_PACK1=$(date +%s)
 aws s3 cp "$ARTIFACT" "$S3_DB_DEST" || fail "artifact upload failed"

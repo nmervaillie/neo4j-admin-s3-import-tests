@@ -47,3 +47,30 @@ def test_publish_s3_uploads(tmp_path):
 def test_publish_s3_rejects_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         publish([tmp_path / "nope.csv"], "s3://any-bucket/x/")
+
+
+def test_clear_dest_local_removes_old_files(tmp_path):
+    from generator.publish import clear_dest
+    dest = tmp_path / "out"
+    dest.mkdir()
+    (dest / "person.csv").write_text("stale")
+    clear_dest(str(dest))
+    assert dest.exists() and not list(dest.iterdir())
+
+
+@mock_aws
+def test_clear_dest_s3_deletes_old_objects():
+    from generator.publish import clear_dest
+    s3 = boto3.client("s3", region_name="eu-west-1")
+    s3.create_bucket(
+        Bucket="test-bucket",
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-1"})
+    s3.put_object(Bucket="test-bucket", Key="source/nodes/Person/person.csv",
+                  Body=b"stale")
+    s3.put_object(Bucket="test-bucket", Key="source/nodes/Company/company.csv",
+                  Body=b"keep")
+    clear_dest("s3://test-bucket/source/nodes/Person/")
+    keys = {o["Key"] for o in s3.list_objects_v2(
+        Bucket="test-bucket", Prefix="source/")["Contents"]}
+    assert "source/nodes/Person/person.csv" not in keys
+    assert "source/nodes/Company/company.csv" in keys

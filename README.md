@@ -23,7 +23,7 @@ aws login
 # 1. Provision (~3-4 min)
 cd terraform
 terraform init
-terraform apply -var 'allowed_ssh_cidr=<your_ip>/32'
+terraform apply -var 'allowed_ssh_cidr=<your_ip>/32' -var 'key_name=<your_key_pair>'
 # note bucket_name and ssh_command from outputs
 
 # 2. SSH in
@@ -43,7 +43,7 @@ scripts/run_import.sh --bucket <bucket> --mode local
 #    s3://<bucket>/timings/<db>-<ts>.json
 
 # 6. Tear down between iterations
-terraform destroy -var 'allowed_ssh_cidr=<your_ip>/32'
+terraform destroy -var 'allowed_ssh_cidr=<your_ip>/32' -var 'key_name=<your_key_pair>'
 ```
 
 ## Testing

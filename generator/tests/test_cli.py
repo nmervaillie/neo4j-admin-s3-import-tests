@@ -72,3 +72,16 @@ def test_cli_seed_determinism_same_manifest(tmp_path, config_file):
         assert rc == 0
     # same config + seed: second run overwrites same file set, no error
     assert (tmp_path / "s" / "nodes" / "Person" / "person.csv").exists()
+
+
+def test_cli_regeneration_clears_stale_files(tmp_path, config_file):
+    dest = tmp_path / "source"
+    rc = main(["--config", config_file, "--dest", str(dest),
+               "--format", "csv", "--rows-per-file", "20"])
+    assert rc == 0
+    rc = main(["--config", config_file, "--dest", str(dest),
+               "--format", "csv", "--rows-per-file", "0"])
+    assert rc == 0
+    person_files = list((dest / "nodes" / "Person").iterdir())
+    # only the new single file remains; old parts are gone
+    assert [f.name for f in person_files] == ["person.csv"]

@@ -10,7 +10,7 @@ from pathlib import Path
 from generator.generate import (
     generate_node_rows, generate_rel_rows, load_config,
 )
-from generator.publish import publish
+from generator.publish import clear_dest, publish
 from generator.writers import node_columns, rel_columns, write_rows
 
 
@@ -44,8 +44,9 @@ def main(argv=None) -> int:
                                stage / "nodes" / spec.label,
                                args.format, args.rows_per_file,
                                _slug(spec.label))
-            manifest["nodes"][spec.label] = publish(
-                paths, f"{base_dest}/nodes/{spec.label}")
+            dest_dir = f"{base_dest}/nodes/{spec.label}"
+            clear_dest(dest_dir)
+            manifest["nodes"][spec.label] = publish(paths, dest_dir)
             manifest["rows"]["nodes"] += spec.count
         for spec in rels:
             rows = generate_rel_rows(spec, node_counts, args.seed)
@@ -53,8 +54,9 @@ def main(argv=None) -> int:
             paths = write_rows(rows, header, types,
                                stage / "relationships" / spec.type,
                                args.format, args.rows_per_file, _slug(spec.type))
-            manifest["relationships"][spec.type] = publish(
-                paths, f"{base_dest}/relationships/{spec.type}")
+            dest_dir = f"{base_dest}/relationships/{spec.type}"
+            clear_dest(dest_dir)
+            manifest["relationships"][spec.type] = publish(paths, dest_dir)
             manifest["rows"]["relationships"] += spec.count
     finally:
         shutil.rmtree(stage, ignore_errors=True)

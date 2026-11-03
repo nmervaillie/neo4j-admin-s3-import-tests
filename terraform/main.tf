@@ -87,7 +87,12 @@ data "aws_ami" "al2023" {
 
   filter {
     name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
+    values = ["al2023-ami-2023.*-arm64"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["arm64"]
   }
 
   filter {
@@ -99,6 +104,7 @@ data "aws_ami" "al2023" {
 resource "aws_instance" "import_runner" {
   ami                    = data.aws_ami.al2023.id
   instance_type          = var.instance_type
+  key_name               = var.key_name
   iam_instance_profile   = aws_iam_instance_profile.import_runner.name
   vpc_security_group_ids = [aws_security_group.ssh.id]
 
