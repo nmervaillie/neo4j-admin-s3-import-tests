@@ -72,11 +72,12 @@ def _csv_value(value):
     return value
 
 
-def _write_csv(chunk, header, keys, path: Path):
+def _write_csv(chunk, header, keys, path: Path, write_header: bool = True):
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(header)
+        if write_header:
+            writer.writerow(header)
         for row in chunk:
             writer.writerow([_csv_value(row[k]) for k in keys])
     tmp.rename(path)
@@ -108,7 +109,9 @@ def write_rows(rows, header, gen_types, out_dir, fmt, rows_per_file, base_name):
         name = f"{base_name}.{ext}" if single else f"{base_name}-part-{i:05d}.{ext}"
         path = out_dir / name
         if fmt == "csv":
-            _write_csv(chunk, header, keys, path)
+            # comma-joined chunked files are one logical input for
+            # neo4j-admin: only the first part carries the header row
+            _write_csv(chunk, header, keys, path, write_header=(i == 1))
         else:
             _write_parquet(chunk, header, keys, gen_types, path)
         paths.append(path)

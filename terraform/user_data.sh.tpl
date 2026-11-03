@@ -16,9 +16,10 @@ curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" \
 unzip -q /tmp/awscli.zip -d /tmp
 /tmp/aws/install
 
-# RAID0 all instance-store NVMe devices into /scratch.
-# Match by model so the EBS root volume (/dev/nvme0n1) is never included.
-DEVICES=$(ls /dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage_* 2>/dev/null || true)
+# RAID0 all instance-store NVMe namespace devices into /scratch.
+# Namespace-only glob (-ns-*): the controller device must be excluded.
+# Model match keeps the EBS root volume (/dev/nvme0n1) out.
+DEVICES=$(ls /dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage_*-ns-* 2>/dev/null || true)
 if [[ -n "$DEVICES" ]]; then
   N=$(echo $DEVICES | wc -w)
   mdadm --create /dev/md0 --level=0 --raid-devices="$N" $DEVICES --force
@@ -39,7 +40,8 @@ tar -xzf /tmp/neo4j.tgz -C "$NEO4J_HOME" --strip-components=1
 # Offline import writes here; runner reads NEO4J_DATA_DIR from this conf.
 echo "server.directories.data=$NEO4J_DATA_DIR" >> "$NEO4J_HOME/conf/neo4j.conf"
 
-"$NEO4J_HOME/bin/neo4j-admin" server license accept
+# 2026.10.1: license subcommand takes the flag directly (no 'accept')
+"$NEO4J_HOME/bin/neo4j-admin" server license --accept-commercial
 
 # Ownership last: tarball extracted as root, everything below must be
 # writable by ec2-user (import runner writes databases/transactions).

@@ -117,6 +117,9 @@ resource "aws_instance" "import_runner" {
     neo4j_version = var.neo4j_version
   })
 
+  # user_data changes (setup script fixes) replace the instance
+  user_data_replace_on_change = true
+
   tags = {
     Name    = "neo4j-import-runner"
     Project = "neo4j-admin-s3-import-tests"

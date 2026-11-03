@@ -44,9 +44,10 @@ def test_chunked_mode_exact_boundary(tmp_path):
     assert [p.name for p in paths] == [
         "person-part-00001.csv", "person-part-00002.csv", "person-part-00003.csv"]
     total = 0
-    for p in paths:
+    for j, p in enumerate(paths):
         with open(p, newline="") as f:
-            total += sum(1 for _ in csv.reader(f)) - 1
+            lines = sum(1 for _ in csv.reader(f))
+        total += lines - (1 if j == 0 else 0)  # header only in first part
     assert total == 250
 
 
@@ -87,3 +88,21 @@ def test_unknown_format_raises(tmp_path):
     header, types = node_columns(NODE)
     with pytest.raises(ValueError, match="unknown format"):
         write_rows(rows, header, types, tmp_path, "orc", 0, "person")
+
+
+def test_chunked_csv_header_only_in_first_part(tmp_path):
+    """neo4j-admin treats comma-joined files as one logical file:
+    only the first part carries the header row."""
+    rows = generate_node_rows(NODE, seed=1)
+    header, types = node_columns(NODE)
+    paths = write_rows(rows, header, types, tmp_path, "csv", 100, "person")
+    assert len(paths) == 3
+    with open(paths[0], newline="") as f:
+        first = list(csv.reader(f))
+    assert first[0] == header
+    assert len(first) == 101  # header + 100 rows
+    for p in paths[1:]:
+        with open(p, newline="") as f:
+            rest = list(csv.reader(f))
+        assert rest[0] != header  # no header in later parts
+        assert all(len(r) == len(header) for r in rest)

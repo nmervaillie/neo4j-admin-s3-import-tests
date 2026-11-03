@@ -45,6 +45,9 @@ S3_DB_DEST="s3://$BUCKET/databases/$ARTIFACT_NAME"
 S3_TIMINGS_DEST="s3://$BUCKET/timings/${DB}-${TIMESTAMP}.json"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
+# Prefer a neo4j-admin on PATH (tests stub it), else $NEO4J_HOME/bin.
+NEO4J_ADMIN_BIN="${NEO4J_ADMIN_BIN:-$(command -v neo4j-admin || echo "$NEO4J_HOME/bin/neo4j-admin")}"
+
 # --- source file listing ----------------------------------------------------
 s3_file_list() { # $1 = s3 dir; prints full s3:// URLs of contained files
   aws s3 ls --recursive "$1" | awk -v prefix="s3://$BUCKET/" '{print prefix $4}'
@@ -89,7 +92,7 @@ for rtype in $REL_TYPES; do
   IMPORT_ARGS+=(--relationships="$rtype=$(echo "$files" | paste -sd, -)")
 done
 
-CMD=(neo4j-admin database import full "$DB" --overwrite-destination "${IMPORT_ARGS[@]}")
+CMD=("$NEO4J_ADMIN_BIN" database import full "$DB" --overwrite-destination "${IMPORT_ARGS[@]}")
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "DRY RUN resolved command:"
