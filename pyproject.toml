@@ -2,4 +2,10 @@
 name = "neo4j-admin-s3-import-tests"
 version = "0.1.0"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["boto3>=1.35", "pyarrow>=17"]
+
+[dependency-groups]
+dev = ["pytest>=8", "moto>=5"]
+
+[tool.pytest.ini_options]
+testpaths = ["generator/tests", "scripts/tests"]
