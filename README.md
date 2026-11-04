@@ -55,6 +55,9 @@ runs compare cleanly.
 Note: `total_seconds` in the timings JSON starts at the import, not
 the sync — for local-mode end-to-end wall time, add `sync_seconds`.
 
+See `docs/results/2026-11-04-benchmarks.md` for measured results and
+findings from the 2026-11 campaigns.
+
 ## Requirements
 
 **AWS**

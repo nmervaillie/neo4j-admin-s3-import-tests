@@ -1,3 +1,4 @@
+import gzip
 import json
 
 import boto3
@@ -72,6 +73,29 @@ def test_cli_seed_determinism_same_manifest(tmp_path, config_file):
         assert rc == 0
     # same config + seed: second run overwrites same file set, no error
     assert (tmp_path / "s" / "nodes" / "Person" / "person.csv.gz").exists()
+
+
+def test_cli_only_filter_generates_single_spec(tmp_path, config_file, capsys):
+    """--only restricts generation to one label/type; counts for other
+    nodes still feed relationship id ranges."""
+    dest = tmp_path / "source"
+    rc = main(["--config", config_file, "--dest", str(dest),
+               "--format", "csv", "--only", "WORKS_FOR"])
+    assert rc == 0
+    manifest = json.loads(capsys.readouterr().out)
+    assert manifest["rows"] == {"nodes": 0, "relationships": 45}
+    assert manifest["nodes"] == {}
+    assert len(manifest["relationships"]["WORKS_FOR"]) == 1
+    assert (dest / "relationships" / "WORKS_FOR" /
+            "works_for.csv.gz").exists()
+    assert not (dest / "nodes").exists()
+    # WORKS_FOR references Person(50)/Company(5) counts from full config
+    with gzip.open(dest / "relationships" / "WORKS_FOR" /
+                   "works_for.csv.gz", "rt") as f:
+        import csv as _csv
+        rows = list(_csv.reader(f))[1:]
+    assert all(r[0].startswith("Person-") and int(r[0].split("-")[1]) < 50
+               for r in rows)
 
 
 def test_cli_regeneration_clears_stale_files(tmp_path, config_file):

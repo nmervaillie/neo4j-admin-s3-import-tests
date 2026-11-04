@@ -28,10 +28,19 @@ def main(argv=None) -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dest", required=True,
                         help="local directory or s3://bucket/prefix/")
+    parser.add_argument("--only", action="append", default=None, metavar="NAME",
+                        help="generate only this node label or relationship "
+                             "type (repeatable); counts for filtered-out "
+                             "nodes still feed relationship generation")
     args = parser.parse_args(argv)
 
     nodes, rels = load_config(args.config)
     node_counts = {n.label: n.count for n in nodes}
+    if args.only:
+        # node_counts stays complete: rel specs reference node counts
+        # even when those node specs are filtered out
+        nodes = [n for n in nodes if n.label in args.only]
+        rels = [r for r in rels if r.type in args.only]
     base_dest = args.dest.rstrip("/")
     stage = Path(tempfile.mkdtemp(prefix="neo4j-gen-"))
     manifest = {"nodes": {}, "relationships": {}, "rows": {
