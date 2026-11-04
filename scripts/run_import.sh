@@ -4,6 +4,7 @@
 set -euo pipefail
 
 BUCKET="" MODE="" DB="neo4j" DRY_RUN=0 KEEP_SCRATCH=0
+SOURCE_PREFIX="${SOURCE_PREFIX:-source}"
 JAVA_HEAP="${JAVA_HEAP:-8g}"
 NEO4J_HOME="${NEO4J_HOME:-/opt/neo4j}"
 NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-/scratch/neo4j-data}"
@@ -14,11 +15,12 @@ SOURCE_NODES="nodes" SOURCE_RELS="relationships"
 usage() {
   cat <<EOF
 Usage: $(basename "$0") --bucket BUCKET --mode s3|local [--db NAME]
-                      [--dry-run] [--keep-scratch]
+                      [--source-prefix PREFIX] [--dry-run] [--keep-scratch]
 
 Environment: JAVA_HEAP (default 8g), NEO4J_HOME (default /opt/neo4j),
              NEO4J_DATA_DIR (default /scratch/neo4j-data),
-             SCRATCH (default /scratch), ZSTD_LEVEL (default 3)
+             SCRATCH (default /scratch), ZSTD_LEVEL (default 3),
+             SOURCE_PREFIX (default source)
 EOF
   exit 2
 }
@@ -28,6 +30,7 @@ while [[ $# -gt 0 ]]; do
     --bucket) BUCKET="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
     --db) DB="$2"; shift 2 ;;
+    --source-prefix) SOURCE_PREFIX="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --keep-scratch) KEEP_SCRATCH=1; shift ;;
     *) usage ;;
@@ -35,7 +38,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$BUCKET" && ( "$MODE" == "s3" || "$MODE" == "local" ) ]] || usage
 
-S3_SOURCE="s3://$BUCKET/source"
+S3_SOURCE="s3://$BUCKET/$SOURCE_PREFIX"
 DB_DIR="$NEO4J_DATA_DIR/databases/$DB"
 TX_DIR="$NEO4J_DATA_DIR/transactions/$DB"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -61,13 +64,13 @@ if [[ "$MODE" == "s3" ]]; then
   NODE_LABELS=$(aws s3 ls "$S3_SOURCE/$SOURCE_NODES/" | awk '/PRE /{print $2}' | tr -d '/' | tr '\n' ' ')
   REL_TYPES=$(aws s3 ls "$S3_SOURCE/$SOURCE_RELS/" | awk '/PRE /{print $2}' | tr -d '/' | tr '\n' ' ')
 else
-  mkdir -p "$SCRATCH/source"
+  mkdir -p "$SCRATCH/$SOURCE_PREFIX"
   T_SYNC0=$(date +%s)
-  aws s3 sync --delete "$S3_SOURCE/" "$SCRATCH/source/"
+  aws s3 sync --delete "$S3_SOURCE/" "$SCRATCH/$SOURCE_PREFIX/"
   T_SYNC1=$(date +%s)
   SYNC_SECONDS=$((T_SYNC1 - T_SYNC0))
-  NODE_LABELS=$(cd "$SCRATCH/source/$SOURCE_NODES" 2>/dev/null && ls -1 || true)
-  REL_TYPES=$(cd "$SCRATCH/source/$SOURCE_RELS" 2>/dev/null && ls -1 || true)
+  NODE_LABELS=$(cd "$SCRATCH/$SOURCE_PREFIX/$SOURCE_NODES" 2>/dev/null && ls -1 || true)
+  REL_TYPES=$(cd "$SCRATCH/$SOURCE_PREFIX/$SOURCE_RELS" 2>/dev/null && ls -1 || true)
 fi
 
 [[ -n "$NODE_LABELS" ]] || fail "no source node files found under $S3_SOURCE/$SOURCE_NODES/ — run the generator first"
@@ -77,7 +80,7 @@ for label in $NODE_LABELS; do
   if [[ "$MODE" == "s3" ]]; then
     files=$(s3_file_list "$S3_SOURCE/$SOURCE_NODES/$label/")
   else
-    files=$(local_file_list "$SCRATCH/source/$SOURCE_NODES/$label")
+    files=$(local_file_list "$SCRATCH/$SOURCE_PREFIX/$SOURCE_NODES/$label")
   fi
   [[ -n "$files" ]] || fail "no files for node label $label"
   IMPORT_ARGS+=(--nodes="$label=$(echo "$files" | paste -sd, -)")
@@ -86,7 +89,7 @@ for rtype in $REL_TYPES; do
   if [[ "$MODE" == "s3" ]]; then
     files=$(s3_file_list "$S3_SOURCE/$SOURCE_RELS/$rtype/")
   else
-    files=$(local_file_list "$SCRATCH/source/$SOURCE_RELS/$rtype")
+    files=$(local_file_list "$SCRATCH/$SOURCE_PREFIX/$SOURCE_RELS/$rtype")
   fi
   [[ -n "$files" ]] || fail "no files for relationship type $rtype"
   IMPORT_ARGS+=(--relationships="$rtype=$(echo "$files" | paste -sd, -)")
@@ -103,7 +106,7 @@ fi
 
 # --- import -------------------------------------------------------------------
 T_IMPORT0=$(date +%s)
-HEAP_SIZE="$JAVA_HEAP" "${CMD[@]}" || fail "neo4j-admin import failed (exit $?); source kept at $SCRATCH/source for post-mortem"
+HEAP_SIZE="$JAVA_HEAP" "${CMD[@]}" || fail "neo4j-admin import failed (exit $?); source kept at $SCRATCH/$SOURCE_PREFIX for post-mortem"
 T_IMPORT1=$(date +%s)
 [[ -d "$DB_DIR" ]] || fail "import succeeded but database dir not found: $DB_DIR"
 
@@ -127,6 +130,7 @@ TIMINGS_FILE="$SCRATCH/databases/${DB}-${TIMESTAMP}.json"
 cat > "$TIMINGS_FILE" <<EOF
 {"db": "$DB", "mode": "$MODE", "bucket": "$BUCKET",
  "java_heap": "$JAVA_HEAP", "timestamp": "$TIMESTAMP",
+ "source_prefix": "$SOURCE_PREFIX",
  "sync_seconds": $SYNC_SECONDS,
  "import_seconds": $((T_IMPORT1 - T_IMPORT0)),
  "pack_seconds": $((T_PACK1 - T_PACK0)),
@@ -137,7 +141,7 @@ EOF
 aws s3 cp "$TIMINGS_FILE" "$S3_TIMINGS_DEST" || fail "timings upload failed"
 
 if [[ "$MODE" == "local" && "$KEEP_SCRATCH" != 1 ]]; then
-  rm -rf "$SCRATCH/source"
+  rm -rf "$SCRATCH/$SOURCE_PREFIX"
 fi
 
 echo "OK: import complete, artifact at $S3_DB_DEST, timings at $S3_TIMINGS_DEST"

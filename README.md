@@ -7,6 +7,54 @@ switchable S3-direct vs local-NVMe import mode.
 See `docs/superpowers/specs/2026-11-03-aws-neo4j-import-infra-design.md`
 for the design.
 
+## What the tests measure
+
+```
+                        ┌──────────────────────────────────────────┐
+                        │  GENERATOR (configs/example.json)        │
+                        │  same data, seed 42, 4 layouts           │
+                        └───────────────┬──────────────────────────┘
+                                        │ publish (parallel upload)
+                                        ▼
+        ┌─────────────────────────── S3 BUCKET ────────────────────────────┐
+        │                                                                  │
+        │   source-csv-single/      1 file per node/rel type (.csv.gz)     │
+        │   source-csv-chunked/   400 files (.csv.gz, 10k rows each)       │
+        │   source-parquet-single/ 1 file per type (.parquet)              │
+        │   source-parquet-chunked/ 400 files (.parquet)                   │
+        │                                                                  │
+        └───────┬──────────────────────────────┬───────────────────────────┘
+                │                              │
+     MODE = s3  │                              │  MODE = local
+   (network)    ▼                              ▼  (disk)
+   ┌─────────────────────────┐    ┌────────────────────────────────────┐
+   │ neo4j-admin import      │    │ aws s3 sync → /scratch (NVMe)      │
+   │ reads straight from S3  │    │ then neo4j-admin import reads NVMe │
+   └───────────┬─────────────┘    └───────────────┬────────────────────┘
+               │                                  │
+               └──────────────┬───────────────────┘
+                              ▼
+              ┌────────────────────────────────┐
+              │  pack: tar | zstd → artifact   │
+              └───────────────┬────────────────┘
+                              │ upload + size verify
+                              ▼
+        ┌──────────────────────── S3 BUCKET ────────────────────────┐
+        │   databases/<db>-<ts>.tar.zst   (imported Neo4j store)   │
+        │   timings/<db>-<ts>.json       (sync/import/pack/total)  │
+        └───────────────────────────────────────────────────────────┘
+```
+
+The experiment: 2 formats (csv.gz / parquet) × 2 granularities
+(1 file / many files per node/rel type) × 2 sources (S3-direct /
+local NVMe) = 8 imports of the identical logical graph. Everything
+else is held constant: same instance, same heap, same seed. The
+timings JSON records the axis values (`source_prefix`, `mode`) so
+runs compare cleanly.
+
+Note: `total_seconds` in the timings JSON starts at the import, not
+the sync — for local-mode end-to-end wall time, add `sync_seconds`.
+
 ## Layout
 
 - `terraform/` — root module: S3 bucket, m7gd.4xlarge EC2, IAM, user_data
@@ -30,14 +78,27 @@ terraform apply -var 'allowed_ssh_cidr=<your_ip>/32' -var 'key_name=<your_key_pa
 ssh ec2-user@<ip>
 # wait for setup: until [ -f /opt/neo4j/.setup-complete ]; do sleep 5; done
 
-# 3. Generate source data (on the instance, or anywhere with AWS creds)
-generate --config configs/example.json --dest s3://<bucket>/source/ \
-  --format csv --rows-per-file 100000
+# 3. Generate source data (on the instance, or anywhere with AWS creds).
+#    Four layouts of the same dataset (same --seed): format x file
+#    granularity. Keep them side by side under distinct prefixes.
+generate --config configs/example.json --dest s3://<bucket>/source-csv-single/ \
+  --format csv --rows-per-file 0          # one .csv.gz per node/rel type
+generate --config configs/example.json --dest s3://<bucket>/source-csv-chunked/ \
+  --format csv --rows-per-file 10000      # thousands of .csv.gz per type
+generate --config configs/example.json --dest s3://<bucket>/source-parquet-single/ \
+  --format parquet --rows-per-file 0      # one .parquet per type
+generate --config configs/example.json --dest s3://<bucket>/source-parquet-chunked/ \
+  --format parquet --rows-per-file 10000  # thousands of .parquet per type
 
-# 4. Run import — S3-direct:
-scripts/run_import.sh --bucket <bucket> --mode s3
-#    or local-NVMe:
-scripts/run_import.sh --bucket <bucket> --mode local
+# 4. Run imports — 2 modes x 4 layouts:
+scripts/run_import.sh --bucket <bucket> --mode s3    --source-prefix source-csv-single
+scripts/run_import.sh --bucket <bucket> --mode s3    --source-prefix source-csv-chunked
+scripts/run_import.sh --bucket <bucket> --mode s3    --source-prefix source-parquet-single
+scripts/run_import.sh --bucket <bucket> --mode s3    --source-prefix source-parquet-chunked
+scripts/run_import.sh --bucket <bucket> --mode local --source-prefix source-csv-single
+scripts/run_import.sh --bucket <bucket> --mode local --source-prefix source-csv-chunked
+scripts/run_import.sh --bucket <bucket> --mode local --source-prefix source-parquet-single
+scripts/run_import.sh --bucket <bucket> --mode local --source-prefix source-parquet-chunked
 
 # 5. Results: s3://<bucket>/databases/<db>-<ts>.tar.zst and
 #    s3://<bucket>/timings/<db>-<ts>.json

@@ -70,23 +70,25 @@ def _value(rng, kind):
 
 
 def generate_node_rows(spec, seed):
-    """Rows are dicts keyed 'id' plus property names."""
+    """Yield rows lazily: dicts keyed 'id' plus property names.
+
+    Rows are generated one at a time so arbitrarily large counts never
+    materialize in memory.
+    """
     rng = random.Random(f"{seed}:{spec.label}")
-    rows = []
     for i in range(spec.count):
         row = {"id": f"{spec.label}-{i}"}
         for prop in spec.properties:
             row[prop.name] = _value(rng, prop.type)
-        rows.append(row)
-    return rows
+        yield row
 
 
 def generate_rel_rows(spec, node_counts, seed):
-    """node_counts: {label: count} from the config's node specs."""
+    """Yield rows lazily. node_counts: {label: count} from the config's
+    node specs."""
     rng = random.Random(f"{seed}:{spec.type}")
     start_count = node_counts[spec.start]
     end_count = node_counts[spec.end]
-    rows = []
     for _ in range(spec.count):
         row = {
             "start": f"{spec.start}-{rng.randrange(start_count)}",
@@ -94,5 +96,4 @@ def generate_rel_rows(spec, node_counts, seed):
         }
         for prop in spec.properties:
             row[prop.name] = _value(rng, prop.type)
-        rows.append(row)
-    return rows
+        yield row

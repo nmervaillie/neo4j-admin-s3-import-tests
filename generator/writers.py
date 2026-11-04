@@ -1,7 +1,10 @@
 """File writers producing neo4j-admin import compatible CSV and Parquet."""
 
 import csv
+import gzip
+import sys
 from datetime import datetime
+from itertools import islice
 from pathlib import Path
 
 import pyarrow as pa
@@ -56,14 +59,6 @@ def _keys(header):
     return keys
 
 
-def _chunks(rows, rows_per_file):
-    if rows_per_file <= 0 or rows_per_file >= len(rows):
-        yield rows
-        return
-    for i in range(0, len(rows), rows_per_file):
-        yield rows[i:i + rows_per_file]
-
-
 def _csv_value(value):
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -72,27 +67,54 @@ def _csv_value(value):
     return value
 
 
-def _write_csv(chunk, header, keys, path: Path, write_header: bool = True):
+# rows buffered per parquet row group when writing a single (unchunked) file
+PARQUET_ROW_GROUP = 100_000
+
+# gzip level for CSV output: 6 writes ~2x faster than 9 at ~1% worse ratio
+GZIP_COMPRESSLEVEL = 6
+
+
+def _write_csv(rows, header, keys, path: Path, write_header: bool = True):
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", newline="") as f:
+    with gzip.open(tmp, "wt", newline="",
+                   compresslevel=GZIP_COMPRESSLEVEL) as f:
         writer = csv.writer(f)
         if write_header:
             writer.writerow(header)
-        for row in chunk:
+        for row in rows:
             writer.writerow([_csv_value(row[k]) for k in keys])
     tmp.rename(path)
 
 
-def _write_parquet(chunk, header, keys, gen_types, path: Path):
+def _write_parquet(rows, header, keys, gen_types, path: Path,
+                   row_group_rows: int = 0):
+    """Write rows to one parquet file, buffering at most row_group_rows
+    rows in memory (0 = all rows, for already-bounded chunk inputs)."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    data = {h: pa.array([row[k] for row in chunk], type=ARROW_TYPES[t])
-            for h, k, t in zip(header, keys, gen_types)}
-    pq.write_table(pa.table(data), tmp)
+    schema = pa.schema(
+        [(h, ARROW_TYPES[t]) for h, t in zip(header, gen_types)])
+    rows = iter(rows)  # islice must see one shared iterator, not re-iterate
+    with pq.ParquetWriter(tmp, schema) as writer:
+        if row_group_rows <= 0:
+            row_group_rows = sys.maxsize  # effectively unbounded
+        while True:
+            chunk = list(islice(rows, row_group_rows))
+            if not chunk:
+                break
+            data = {h: pa.array([row[k] for row in chunk], type=ARROW_TYPES[t])
+                    for h, k, t in zip(header, keys, gen_types)}
+            writer.write_table(pa.table(data))
     tmp.rename(path)
 
 
-def write_rows(rows, header, gen_types, out_dir, fmt, rows_per_file, base_name):
-    """Write rows to one or more files. Returns list of final file paths.
+def write_rows(rows, header, gen_types, out_dir, fmt, rows_per_file, base_name,
+               total):
+    """Write a row iterable to one or more files. Returns list of final
+    file paths.
+
+    Rows are consumed lazily; only rows_per_file rows are buffered at a
+    time. total (expected row count) decides single-file vs chunked
+    naming up front, before any row is consumed.
 
     Files are written with a .tmp suffix and renamed only when complete,
     so consumers never observe half-written files.
@@ -102,12 +124,25 @@ def write_rows(rows, header, gen_types, out_dir, fmt, rows_per_file, base_name):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     keys = _keys(header)
-    ext = fmt
-    single = rows_per_file <= 0 or rows_per_file >= len(rows)
+    ext = "csv.gz" if fmt == "csv" else fmt
+    single = rows_per_file <= 0 or rows_per_file >= total
+    if single:
+        path = out_dir / f"{base_name}.{ext}"
+        if fmt == "csv":
+            _write_csv(rows, header, keys, path)
+        else:
+            _write_parquet(rows, header, keys, gen_types, path,
+                           row_group_rows=PARQUET_ROW_GROUP)
+        return [path]
     paths = []
-    for i, chunk in enumerate(_chunks(rows, rows_per_file), start=1):
-        name = f"{base_name}.{ext}" if single else f"{base_name}-part-{i:05d}.{ext}"
-        path = out_dir / name
+    i = 0
+    rows = iter(rows)
+    while True:
+        chunk = list(islice(rows, rows_per_file))
+        if not chunk:
+            break
+        i += 1
+        path = out_dir / f"{base_name}-part-{i:05d}.{ext}"
         if fmt == "csv":
             # comma-joined chunked files are one logical input for
             # neo4j-admin: only the first part carries the header row

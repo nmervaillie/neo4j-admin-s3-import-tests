@@ -203,3 +203,35 @@ def test_upload_size_mismatch_fails_run(env):
     r = run_script(env, "--bucket", "b", "--mode", "local", "--db", "testdb")
     assert r.returncode != 0
     assert "size mismatch" in (r.stdout + r.stderr).lower()
+
+
+def test_source_prefix_flag_reads_alternate_prefix(env):
+    """--source-prefix points the import at a differently-chunked copy of
+    the same dataset (e.g. source-single/ vs source-chunked/)."""
+    aws_stub = Path(env.env["PATH"].split(":")[0]) / "aws"
+    original = aws_stub.read_text()
+    assert "s3://b/source/" in original, "fixture stub has no source prefix to rewrite"
+    aws_stub.write_text(original
+                        .replace("s3://b/source/", "s3://b/single/")
+                        .replace("123 source/", "123 single/")
+                        .replace("456 source/", "456 single/"))
+    aws_stub.chmod(aws_stub.stat().st_mode | stat.S_IEXEC)
+    r = run_script(env, "--bucket", "b", "--mode", "s3", "--db", "testdb",
+                   "--source-prefix", "single", "--dry-run")
+    assert r.returncode == 0, r.stderr
+    assert "--nodes=Person=s3://b/single/nodes/Person/person.csv" in r.stdout
+    assert ("--relationships=WORKS_FOR="
+            "s3://b/single/relationships/WORKS_FOR/works_for.csv") in r.stdout
+
+
+def test_source_prefix_recorded_in_timings(env):
+    import json
+    import shutil
+    # local mode lists labels from $SCRATCH/<prefix>; stage the tree there
+    shutil.copytree(env.scratch / "source", env.scratch / "chunked")
+    r = run_script(env, "--bucket", "b", "--mode", "local", "--db", "testdb",
+                   "--source-prefix", "chunked")
+    assert r.returncode == 0, r.stderr
+    timings = next(env.fake_s3.glob("testdb-*.json"))
+    body = json.loads(timings.read_text())
+    assert body["source_prefix"] == "chunked"

@@ -35,9 +35,9 @@ def test_cli_local_dest_writes_layout_and_manifest(tmp_path, config_file, capsys
     assert manifest["rows"] == {"nodes": 55, "relationships": 45}
     assert len(manifest["nodes"]["Person"]) == 3   # 50 rows / 20 per file
     assert len(manifest["nodes"]["Company"]) == 1
-    assert (dest / "nodes" / "Person" / "person-part-00001.csv").exists()
+    assert (dest / "nodes" / "Person" / "person-part-00001.csv.gz").exists()
     assert (dest / "relationships" / "WORKS_FOR" /
-            "works_for-part-00001.csv").exists()
+            "works_for-part-00001.csv.gz").exists()
 
 
 def test_cli_parquet_single_file(tmp_path, config_file, capsys):
@@ -61,8 +61,8 @@ def test_cli_s3_dest_uploads(tmp_path, config_file, capsys):
     assert rc == 0
     keys = {o["Key"] for o in
             s3.list_objects_v2(Bucket="test-bucket", Prefix="source/")["Contents"]}
-    assert "source/nodes/Person/person.csv" in keys
-    assert "source/relationships/WORKS_FOR/works_for.csv" in keys
+    assert "source/nodes/Person/person.csv.gz" in keys
+    assert "source/relationships/WORKS_FOR/works_for.csv.gz" in keys
 
 
 def test_cli_seed_determinism_same_manifest(tmp_path, config_file):
@@ -71,7 +71,7 @@ def test_cli_seed_determinism_same_manifest(tmp_path, config_file):
                    "--seed", "5"])
         assert rc == 0
     # same config + seed: second run overwrites same file set, no error
-    assert (tmp_path / "s" / "nodes" / "Person" / "person.csv").exists()
+    assert (tmp_path / "s" / "nodes" / "Person" / "person.csv.gz").exists()
 
 
 def test_cli_regeneration_clears_stale_files(tmp_path, config_file):
@@ -84,4 +84,4 @@ def test_cli_regeneration_clears_stale_files(tmp_path, config_file):
     assert rc == 0
     person_files = list((dest / "nodes" / "Person").iterdir())
     # only the new single file remains; old parts are gone
-    assert [f.name for f in person_files] == ["person.csv"]
+    assert [f.name for f in person_files] == ["person.csv.gz"]

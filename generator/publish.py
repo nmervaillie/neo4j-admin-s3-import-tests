@@ -1,9 +1,14 @@
 """Publish staged output files to a local directory or S3."""
 
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import boto3
+
+# concurrent S3 uploads (boto3 clients are thread-safe); chunked datasets
+# can be tens of thousands of small files, where sequential upload dominates
+UPLOAD_WORKERS = 8
 
 
 def is_s3_dest(dest: str) -> bool:
@@ -54,20 +59,24 @@ def publish(paths, dest: str):
     """Move staged files into dest (local dir or s3:// prefix).
 
     Uploads happen only from fully written local files, so S3 consumers
-    never observe partial objects.
+    never observe partial objects. S3 uploads run concurrently
+    (UPLOAD_WORKERS threads); the returned list keeps input order.
     """
     if is_s3_dest(dest):
         bucket, prefix = parse_s3(dest)
         client = _s3_client()
-        out = []
-        for path in paths:
-            path = Path(path)
+        files = [Path(p) for p in paths]
+        for path in files:  # validate before any upload starts
             if not path.is_file():
                 raise FileNotFoundError(f"staged file missing: {path}")
+
+        def upload(path: Path) -> str:
             key = f"{prefix}/{path.name}" if prefix else path.name
             client.upload_file(str(path), bucket, key)
-            out.append(f"s3://{bucket}/{key}")
-        return out
+            return f"s3://{bucket}/{key}"
+
+        with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
+            return list(pool.map(upload, files))
     dest_dir = Path(dest)
     dest_dir.mkdir(parents=True, exist_ok=True)
     out = []

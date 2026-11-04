@@ -49,6 +49,26 @@ def test_publish_s3_rejects_missing_file(tmp_path):
         publish([tmp_path / "nope.csv"], "s3://any-bucket/x/")
 
 
+@mock_aws
+def test_publish_s3_uploads_many_files_preserving_order(tmp_path):
+    s3 = boto3.client("s3", region_name="eu-west-1")
+    s3.create_bucket(
+        Bucket="test-bucket",
+        CreateBucketConfiguration={"LocationConstraint": "eu-west-1"})
+    files = []
+    for i in range(6):
+        f = tmp_path / f"person-part-{i:05d}.csv"
+        f.write_text(f"id:ID\nPerson-{i}\n")
+        files.append(f)
+    dests = publish(files, "s3://test-bucket/source/nodes/Person/")
+    assert len(dests) == 6
+    assert dests == [f"s3://test-bucket/source/nodes/Person/{f.name}"
+                     for f in files]
+    keys = {o["Key"] for o in s3.list_objects_v2(
+        Bucket="test-bucket", Prefix="source/")["Contents"]}
+    assert keys == {f"source/nodes/Person/{f.name}" for f in files}
+
+
 def test_clear_dest_local_removes_old_files(tmp_path):
     from generator.publish import clear_dest
     dest = tmp_path / "out"

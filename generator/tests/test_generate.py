@@ -54,7 +54,7 @@ def test_load_config_rejects_unknown_property_type(tmp_path):
 def test_node_rows_count_ids_and_properties():
     spec = NodeSpec("Person", 100,
                     [Property("name", "string"), Property("age", "int")])
-    rows = generate_node_rows(spec, seed=42)
+    rows = list(generate_node_rows(spec, seed=42))
     assert len(rows) == 100
     assert rows[0] == {"id": "Person-0", "name": rows[0]["name"], "age": rows[0]["age"]}
     assert all(r["id"].startswith("Person-") for r in rows)
@@ -67,19 +67,28 @@ def test_node_rows_unique_ids():
 
 
 def test_seed_determinism():
-    a = generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=7)
-    b = generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=7)
+    a = list(generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=7))
+    b = list(generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=7))
     assert a == b
-    c = generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=8)
+    c = list(generate_node_rows(NodeSpec("Person", 50, [Property("v", "float")]), seed=8))
     assert a != c
 
 
 def test_rel_rows_reference_existing_ids():
     counts = {"Person": 100, "Company": 10}
     spec = RelSpec("WORKS_FOR", 90, "Person", "Company", [Property("since", "int")])
-    rows = generate_rel_rows(spec, counts, seed=42)
+    rows = list(generate_rel_rows(spec, counts, seed=42))
     assert len(rows) == 90
     person_ids = {f"Person-{i}" for i in range(100)}
     company_ids = {f"Company-{i}" for i in range(10)}
     assert all(r["start"] in person_ids and r["end"] in company_ids for r in rows)
     assert all("since" in r for r in rows)
+
+
+def test_generators_are_lazy():
+    """Row generators must not materialize the full dataset."""
+    spec = NodeSpec("Person", 3, [Property("v", "int")])
+    gen = generate_node_rows(spec, seed=1)
+    first = next(gen)
+    assert first["id"] == "Person-0"  # value available before exhaustion
+    assert len(list(gen)) == 2

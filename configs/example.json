@@ -1,22 +1,22 @@
 {
   "nodes": [
-    {"label": "Person", "count": 100000,
+    {"label": "Person", "count": 1000000,
      "properties": [
        {"name": "name", "type": "string"},
        {"name": "age", "type": "int"},
        {"name": "active", "type": "bool"},
        {"name": "created", "type": "timestamp"}
      ]},
-    {"label": "Company", "count": 10000,
+    {"label": "Company", "count": 100000,
      "properties": [
        {"name": "name", "type": "string"},
        {"name": "revenue", "type": "float"}
      ]}
   ],
   "relationships": [
-    {"type": "WORKS_FOR", "count": 90000, "start": "Person", "end": "Company",
+    {"type": "WORKS_FOR", "count": 900000, "start": "Person", "end": "Company",
      "properties": [{"name": "since", "type": "int"}]},
-    {"type": "KNOWS", "count": 200000, "start": "Person", "end": "Person",
+    {"type": "KNOWS", "count": 2000000, "start": "Person", "end": "Person",
      "properties": [{"name": "strength", "type": "float"}]}
   ]
 }

@@ -43,7 +43,7 @@ def main(argv=None) -> int:
             paths = write_rows(rows, header, types,
                                stage / "nodes" / spec.label,
                                args.format, args.rows_per_file,
-                               _slug(spec.label))
+                               _slug(spec.label), spec.count)
             dest_dir = f"{base_dest}/nodes/{spec.label}"
             clear_dest(dest_dir)
             manifest["nodes"][spec.label] = publish(paths, dest_dir)
@@ -53,7 +53,8 @@ def main(argv=None) -> int:
             header, types = rel_columns(spec)
             paths = write_rows(rows, header, types,
                                stage / "relationships" / spec.type,
-                               args.format, args.rows_per_file, _slug(spec.type))
+                               args.format, args.rows_per_file,
+                               _slug(spec.type), spec.count)
             dest_dir = f"{base_dest}/relationships/{spec.type}"
             clear_dest(dest_dir)
             manifest["relationships"][spec.type] = publish(paths, dest_dir)
