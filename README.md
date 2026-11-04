@@ -55,6 +55,48 @@ runs compare cleanly.
 Note: `total_seconds` in the timings JSON starts at the import, not
 the sync — for local-mode end-to-end wall time, add `sync_seconds`.
 
+## Requirements
+
+**AWS**
+- An AWS account with credentials configured locally
+  (`aws sts get-caller-identity` must succeed). Permissions needed:
+  EC2 (instances, security groups, key pairs), IAM (role, instance
+  profile, policy), S3 (bucket create/delete).
+- An EC2 key pair in the target region — the instance is SSH-only,
+  no password access.
+- Your public IP for `allowed_ssh_cidr` (e.g. `<your_ip>/32`). The
+  security group allows SSH from exactly this CIDR; if your IP
+  changes between runs, update it or SSH will time out.
+- The instance profile the stack creates needs `s3:GetObject`,
+  `PutObject`, `ListBucket`, `DeleteObject` on the test bucket —
+  terraform sets this up, no manual policy work.
+
+**Tools (operator machine)**
+- Terraform >= 1.6 with AWS provider >= 5.0
+- [uv](https://docs.astral.sh/uv/) (or Python >= 3.12) — runs the
+  generator and the unit tests; dependencies (`boto3`, `pyarrow`)
+  install from `pyproject.toml`
+- AWS CLI (for `aws s3 ls/cp` when collecting results)
+
+**Neo4j**
+- Enterprise tarball is pulled from `dist.neo4j.org` at provision
+  time (default `2026.10.1`, see `neo4j_version` variable); the
+  license is accepted non-interactively in user_data
+  (`--accept-commercial`). Use requires an appropriate Neo4j
+  license.
+
+**Cost / scale**
+- One m7gd.4xlarge (16 vCPU, 64 GB RAM, ~750 GB NVMe) + 100 GB EBS
+  + S3 storage while the stack exists. A full 8-run campaign on the
+  1.1M-node dataset is ~35 min of instance time; tear down
+  (`terraform destroy`) when done — the bucket has
+  `force_destroy = true`, so destroy also deletes all test data.
+
+**Not needed on the EC2 instance**: the generator can run on the
+operator machine (it uploads straight to S3); the instance only
+needs `run_import.sh`, which relies on tools the user_data script
+installs (Java 21, neo4j-admin, awscli v2, zstd, tar).
+
 ## Layout
 
 - `terraform/` — root module: S3 bucket, m7gd.4xlarge EC2, IAM, user_data
